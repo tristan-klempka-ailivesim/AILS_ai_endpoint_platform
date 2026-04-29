@@ -117,27 +117,62 @@ The API accepts `image/png`, `image/jpeg`, and `image/webp` data URLs. It decode
 
 Frontend integration details are documented in [docs/frontend_integration.md](docs/frontend_integration.md).
 
-## Docker
+## Docker Operations
 
-API only, pointing to an external OpenAI-compatible model server:
+The API image is built from this repo's `Dockerfile`. The llama.cpp model server
+uses the external CUDA image configured by `LLAMA_CPP_IMAGE`, defaulting to:
 
-```bash
-docker compose up api
+```text
+ghcr.io/ggml-org/llama.cpp:server-cuda
 ```
 
-Managed GPU llama.cpp model server:
+Both Compose services use `restart: unless-stopped`.
+
+Start the API and managed GPU llama.cpp server in the background:
 
 ```bash
-sudo docker compose --profile gpu up llama-cpp
+sudo docker compose --profile gpu up -d --build
 ```
 
-API plus managed GPU llama.cpp:
+Use the same command without `--build` when code and Dockerfile have not changed:
 
 ```bash
-sudo docker compose --profile gpu up
+sudo docker compose --profile gpu up -d
 ```
 
-The GPU profile starts llama.cpp with `${LLAMA_CPP_MODEL_URL}` and `${LLAMA_CPP_MMPROJ_URL}`, then serves it under `${LLAMA_CPP_MODEL_ALIAS}`. The downloaded model is cached in a Docker volume so restarts do not redownload the GGUF. If the model is gated or download-limited, export `HF_TOKEN` in the shell before starting Compose.
+Check status and readiness:
+
+```bash
+sudo docker compose ps
+curl http://localhost:8080/health
+```
+
+View logs:
+
+```bash
+sudo docker compose logs -f api
+sudo docker compose logs -f llama-cpp
+```
+
+Stop both services:
+
+```bash
+sudo docker compose down
+```
+
+Run only the API, pointing to an external OpenAI-compatible model server:
+
+```bash
+sudo docker compose up -d api
+```
+
+Run only the managed GPU llama.cpp service:
+
+```bash
+sudo docker compose --profile gpu up -d llama-cpp
+```
+
+The GPU profile starts llama.cpp with `${LLAMA_CPP_MODEL_URL}` and `${LLAMA_CPP_MMPROJ_URL}`, then serves it under `${LLAMA_CPP_MODEL_ALIAS}`. The downloaded model is cached in the `llama-cpp-cache` Docker volume so restarts do not redownload the GGUF. If the model is gated or download-limited, export `HF_TOKEN` in the shell before starting Compose.
 
 ## Smoke Test
 

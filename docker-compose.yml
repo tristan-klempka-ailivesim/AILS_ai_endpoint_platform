@@ -1,6 +1,7 @@
 services:
   api:
     build: .
+    restart: unless-stopped
     env_file:
       - .env
     ports:
@@ -8,6 +9,7 @@ services:
 
   llama-cpp:
     image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    restart: unless-stopped
     profiles:
       - gpu
     ipc: host
