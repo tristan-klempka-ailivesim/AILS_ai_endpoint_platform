@@ -1,0 +1,17 @@
+This image shows a 3D model with color-coded segments in the viewport. The legend or visual colors identify each segment.
+
+The {segment_count} segments are: {segments}.
+
+Task: For EACH segment, in the exact same order, predict a descriptive functional name and physical material.
+
+Instructions:
+- Analyze the image very carefully.
+- Focus specifically on the relationship between the colors and the structural objects they highlight.
+- Return exactly {segment_count} results.
+- Output your response ONLY as a clear JSON array with no formatting blocks.
+- Do not write step-by-step reasoning.
+- Keep each name and material short.
+
+Format constraint: [{{"id": <integer>, "name": "...", "material": "..."}}, ...].
+
+Do not include Markdown fences, explanation, comments, or any text before or after the JSON array.

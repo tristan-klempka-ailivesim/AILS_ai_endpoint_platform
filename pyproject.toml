@@ -1,0 +1,38 @@
+[project]
+name = "ails-ai-endpoint-platform"
+version = "0.1.0"
+description = "Internal FastAPI VLM inference endpoint backed by an OpenAI-compatible model server."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+    "httpx>=0.27.0",
+    "pillow>=10.4.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "respx>=0.21.0",
+    "ruff>=0.6.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "integration: live API/model-server tests skipped unless RUN_INTEGRATION=1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
