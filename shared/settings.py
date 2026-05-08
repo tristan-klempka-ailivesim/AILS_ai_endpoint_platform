@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     label_temperature: float = 0.1
     label_max_tokens: int = 512
+    label_model_max_retries: int = 1
     prompt_version: str = "label_v1"
     debug_model_io: bool = False
 

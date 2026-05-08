@@ -108,11 +108,75 @@ def test_label_malformed_model_output_returns_502(monkeypatch: pytest.MonkeyPatc
     assert response.json()["detail"] == "model output was not valid JSON"
 
 
+def test_label_retries_once_after_malformed_model_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def chat_completion(self: OpenAIModelClient, **kwargs) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return "not json"
+        return '[{"id":0,"name":"hull","material":"painted fiberglass"}]'
+
+    monkeypatch.setenv("LABEL_MODEL_MAX_RETRIES", "1")
+    get_settings.cache_clear()
+    monkeypatch.setattr(OpenAIModelClient, "chat_completion", chat_completion)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/asset-parts/label",
+        json=label_payload(),
+        headers={"X-Request-ID": "test-rid"},
+    )
+
+    assert response.status_code == 200
+    assert calls == 2
+    assert response.json() == [
+        {"id": 0, "name": "hull", "material": "painted fiberglass"}
+    ]
+
+
+def test_label_returns_502_after_retry_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def chat_completion(self: OpenAIModelClient, **kwargs) -> str:
+        nonlocal calls
+        calls += 1
+        return "not json"
+
+    monkeypatch.setenv("LABEL_MODEL_MAX_RETRIES", "1")
+    get_settings.cache_clear()
+    monkeypatch.setattr(OpenAIModelClient, "chat_completion", chat_completion)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/asset-parts/label",
+        json=label_payload(),
+        headers={"X-Request-ID": "test-rid"},
+    )
+
+    assert response.status_code == 502
+    assert calls == 2
+    assert response.json()["detail"] == "model output was not valid JSON"
+
+
 def test_label_oversized_image_dimensions_return_413(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    calls = 0
+
+    async def chat_completion(self: OpenAIModelClient, **kwargs) -> str:
+        nonlocal calls
+        calls += 1
+        return '[{"id":0,"name":"hull","material":"painted fiberglass"}]'
+
     monkeypatch.setenv("MAX_IMAGE_PIXELS", "0")
     get_settings.cache_clear()
+    monkeypatch.setattr(OpenAIModelClient, "chat_completion", chat_completion)
     client = TestClient(create_app())
 
     response = client.post(
@@ -122,6 +186,7 @@ def test_label_oversized_image_dimensions_return_413(
     )
 
     assert response.status_code == 413
+    assert calls == 0
     assert response.json()["detail"] == "image dimensions too large"
 
 

@@ -55,6 +55,7 @@ The repo includes a default `.env` for the current deployment machine. Keep
 | `MODEL_SERVER_TIMEOUT_SECONDS` | `120` | HTTP timeout for model calls. Reasoning-enabled requests can take 30-60 seconds on the current GPU. |
 | `LABEL_TEMPERATURE` | `0.1` | Generation temperature. |
 | `LABEL_MAX_TOKENS` | `8192` | Max generated tokens. Gemma 4 reasoning may spend significant budget before final content. |
+| `LABEL_MODEL_MAX_RETRIES` | `1` | Number of same-prompt retries for model-output `502` failures before returning an error. |
 | `PROMPT_VERSION` | `label_v1` | Prompt template version. |
 | `DEBUG_MODEL_IO` | `false` | Logs redacted model request payloads and raw model text outputs for debugging. Never logs base64 image data. |
 | `MAX_DECODED_IMAGE_BYTES` | `4194304` | Max decoded image size. |

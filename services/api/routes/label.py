@@ -124,14 +124,30 @@ async def label_asset_parts(
 
     client = OpenAIModelClient(settings)
     prompt_text = build_label_prompt(label_request, settings.label_prompt_template)
-    raw_content = await client.chat_completion(
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=prompt_text,
-        image_data_url=label_request.image,
-        request_id=request_id,
-    )
     requested_ids = [segment.id for segment in label_request.segments]
-    return parse_label_output(raw_content, requested_ids, request_id=request_id)
+    attempts = settings.label_model_max_retries + 1
+
+    for attempt in range(1, attempts + 1):
+        try:
+            raw_content = await client.chat_completion(
+                system_prompt=SYSTEM_PROMPT,
+                user_prompt=prompt_text,
+                image_data_url=label_request.image,
+                request_id=request_id,
+            )
+            return parse_label_output(raw_content, requested_ids, request_id=request_id)
+        except HTTPException as exc:
+            if exc.status_code != 502 or attempt == attempts:
+                raise
+            logger.warning(
+                "retrying model label request request_id=%s attempt=%s max_attempts=%s detail=%s",
+                request_id,
+                attempt,
+                attempts,
+                exc.detail,
+            )
+
+    raise HTTPException(status_code=502, detail="model output was not valid JSON")
 
 
 router.add_api_route(
