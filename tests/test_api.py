@@ -1,4 +1,5 @@
 import base64
+import logging
 from io import BytesIO
 
 import pytest
@@ -62,6 +63,41 @@ def test_label_returns_array_and_headers(monkeypatch: pytest.MonkeyPatch) -> Non
     assert response.json() == [
         {"id": 0, "name": "hull", "material": "painted fiberglass"}
     ]
+
+
+def test_label_generates_request_id_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def chat_completion(self: OpenAIModelClient, **kwargs) -> str:
+        return '[{"id":0,"name":"hull","material":"painted fiberglass"}]'
+
+    monkeypatch.setattr(OpenAIModelClient, "chat_completion", chat_completion)
+    client = TestClient(create_app())
+    response = client.post("/asset-parts/label", json=label_payload())
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"]
+
+
+def test_request_log_includes_request_id_status_and_latency(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def chat_completion(self: OpenAIModelClient, **kwargs) -> str:
+        return '[{"id":0,"name":"hull","material":"painted fiberglass"}]'
+
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    monkeypatch.setattr(OpenAIModelClient, "chat_completion", chat_completion)
+    client = TestClient(create_app())
+    response = client.post(
+        "/asset-parts/label",
+        json=label_payload(),
+        headers={"X-Request-ID": "test-log-rid"},
+    )
+
+    assert response.status_code == 200
+    assert "api request completed request_id=test-log-rid" in caplog.text
+    assert "path=/asset-parts/label" in caplog.text
+    assert "status=200" in caplog.text
+    assert "latency_ms=" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -188,6 +224,27 @@ def test_label_oversized_image_dimensions_return_413(
     assert response.status_code == 413
     assert calls == 0
     assert response.json()["detail"] == "image dimensions too large"
+
+
+def test_request_log_includes_failure_reason_for_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    monkeypatch.setenv("MAX_IMAGE_PIXELS", "0")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/asset-parts/label",
+        json=label_payload(),
+        headers={"X-Request-ID": "test-failure-log-rid"},
+    )
+
+    assert response.status_code == 413
+    assert "api request completed request_id=test-failure-log-rid" in caplog.text
+    assert "status=413" in caplog.text
+    assert "failure_reason=image dimensions too large" in caplog.text
 
 
 def test_label_rejects_image_above_pixel_limit(

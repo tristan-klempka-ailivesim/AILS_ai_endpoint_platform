@@ -1,6 +1,5 @@
 import json
 import logging
-import uuid
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
@@ -112,7 +111,9 @@ async def label_asset_parts(
     response: Response,
 ) -> list[LabelOutput]:
     settings = request.app.state.settings
-    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
+    if request_id is None:
+        request_id = ""
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Prompt-Version"] = settings.prompt_version
 

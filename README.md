@@ -94,11 +94,13 @@ Request:
 }
 ```
 
-Optional header:
+Recommended header:
 
 ```text
 X-Request-ID: client-request-id
 ```
+
+If omitted, the API generates a request ID and returns it in the response. Clients should send and store their own `X-Request-ID` so failed requests can be traced across API logs and model-server logs.
 
 Success response:
 
@@ -113,6 +115,18 @@ Success headers:
 ```text
 X-Request-ID: <request_id>
 X-Prompt-Version: label_v1
+```
+
+The API logs one structured completion line per request:
+
+```text
+api request completed request_id=<id> method=POST path=/asset-parts/label status=200 latency_ms=34120.00 failure_reason=
+```
+
+For validation or model-output failures, `failure_reason` contains the HTTP error detail, for example:
+
+```text
+api request completed request_id=<id> method=POST path=/asset-parts/label status=413 latency_ms=5.00 failure_reason=image dimensions too large
 ```
 
 The API accepts `image/png`, `image/jpeg`, and `image/webp` data URLs. It decodes the image once to verify it before calling the model server. Inputs are rejected before model inference if decoded bytes exceed `MAX_DECODED_IMAGE_BYTES` or `width * height` exceeds `MAX_IMAGE_PIXELS`.
