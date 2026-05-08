@@ -129,7 +129,7 @@ class OpenAIModelClient:
                 status_code=502,
                 detail=(
                     "model returned only reasoning_content; "
-                    "restart llama.cpp with reasoning disabled"
+                    "increase max tokens or disable reasoning"
                 ),
             )
 

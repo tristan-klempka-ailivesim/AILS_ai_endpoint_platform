@@ -15,6 +15,12 @@ services:
     ipc: host
     ports:
       - "${LLAMA_CPP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 10m
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
       - CUDA_VISIBLE_DEVICES=${LLAMA_CPP_CUDA_VISIBLE_DEVICES:-1}
@@ -32,12 +38,16 @@ services:
       - "8000"
       - "--ctx-size"
       - "${LLAMA_CPP_CTX_SIZE:-3200}"
+      - "--ubatch-size"
+      - "${LLAMA_CPP_UBATCH_SIZE:-1024}"
       - "--n-gpu-layers"
       - "${LLAMA_CPP_N_GPU_LAYERS:-999}"
       - "--image-max-tokens"
       - "${LLAMA_CPP_IMAGE_MAX_TOKENS:-560}"
       - "--reasoning"
       - "${LLAMA_CPP_REASONING:-off}"
+      - "--reasoning-budget"
+      - "${LLAMA_CPP_REASONING_BUDGET:-7168}"
     volumes:
       - llama-cpp-cache:/root/.cache/llama.cpp
     deploy:

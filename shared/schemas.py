@@ -73,7 +73,12 @@ def _split_data_url(data_url: str) -> tuple[str, str]:
     return media_type, encoded
 
 
-def validate_image_data_url(data_url: str, *, max_decoded_bytes: int) -> ImageMetadata:
+def validate_image_data_url(
+    data_url: str,
+    *,
+    max_decoded_bytes: int,
+    max_pixels: int | None = None,
+) -> ImageMetadata:
     media_type, encoded = _split_data_url(data_url)
     try:
         decoded = base64.b64decode(encoded, validate=True)
@@ -90,6 +95,9 @@ def validate_image_data_url(data_url: str, *, max_decoded_bytes: int) -> ImageMe
             width, height = image.size
     except (UnidentifiedImageError, OSError) as exc:
         raise HTTPException(status_code=422, detail="image data was not a valid image") from exc
+
+    if max_pixels is not None and width * height > max_pixels:
+        raise HTTPException(status_code=413, detail="image dimensions too large")
 
     return ImageMetadata(
         media_type=media_type,

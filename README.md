@@ -38,7 +38,7 @@ This repo uses `uv`.
 
 ```bash
 uv sync
-uv run uvicorn services.api.main:app --reload
+MODEL_SERVER_BASE_URL=http://localhost:8000/v1 uv run uvicorn services.api.main:app --reload --host 0.0.0.0 --port 8080
 uv run pytest
 ```
 
@@ -52,22 +52,25 @@ The repo includes a default `.env` for the current deployment machine. Keep
 | `API_PORT` | `8080` | Host port for the API container. |
 | `MODEL_SERVER_BASE_URL` | `http://llama-cpp:8000/v1` | OpenAI-compatible model API base URL. Use `http://localhost:8000/v1` when running the API directly on the host. |
 | `MODEL_SERVER_MODEL` | `gemma-4-26b-a4b-it-gguf` | Model name sent in chat completion requests. Must match `/models`. |
-| `MODEL_SERVER_TIMEOUT_SECONDS` | `120` | HTTP timeout for model calls. |
+| `MODEL_SERVER_TIMEOUT_SECONDS` | `120` | HTTP timeout for model calls. Reasoning-enabled requests can take 30-60 seconds on the current GPU. |
 | `LABEL_TEMPERATURE` | `0.1` | Generation temperature. |
-| `LABEL_MAX_TOKENS` | `2048` | Max generated tokens. Gemma 4 may spend some budget in hidden reasoning before final content. |
+| `LABEL_MAX_TOKENS` | `8192` | Max generated tokens. Gemma 4 reasoning may spend significant budget before final content. |
 | `PROMPT_VERSION` | `label_v1` | Prompt template version. |
 | `DEBUG_MODEL_IO` | `false` | Logs redacted model request payloads and raw model text outputs for debugging. Never logs base64 image data. |
 | `MAX_DECODED_IMAGE_BYTES` | `4194304` | Max decoded image size. |
+| `MAX_IMAGE_PIXELS` | `1290240` | Max input image dimensions as `width * height`, aligned with the llama.cpp vision image pixel budget. |
 | `LLAMA_CPP_PORT` | `8000` | Host port for llama.cpp. |
 | `LLAMA_CPP_IMAGE` | `ghcr.io/ggml-org/llama.cpp:server-cuda` | llama.cpp CUDA server image. |
 | `LLAMA_CPP_CUDA_VISIBLE_DEVICES` | `1` | Host GPU index exposed to the llama.cpp container. Use `1` to reserve GPU 0 for other work. |
 | `LLAMA_CPP_MODEL_URL` | Unsloth `UD-Q4_K_XL` GGUF URL | Exact GGUF file URL to download and serve. |
 | `LLAMA_CPP_MMPROJ_URL` | Unsloth `mmproj-BF16.gguf` URL | Multimodal projector URL required for image input. |
 | `LLAMA_CPP_MODEL_ALIAS` | `gemma-4-26b-a4b-it-gguf` | Served model alias returned by `/models`. |
-| `LLAMA_CPP_CTX_SIZE` | `3200` | Context size. Keep conservative on 48 GB GPUs. |
+| `LLAMA_CPP_CTX_SIZE` | `40000` | Context size. Large values increase KV-cache memory usage. |
+| `LLAMA_CPP_UBATCH_SIZE` | `1024` | Physical batch size. Must exceed the largest multimodal image token batch; `512` can crash on image requests. |
 | `LLAMA_CPP_N_GPU_LAYERS` | `999` | Try to offload all layers to GPU. Lower if startup fails. |
 | `LLAMA_CPP_IMAGE_MAX_TOKENS` | `560` | Vision encoder image-token budget. Lower uses less memory. |
-| `LLAMA_CPP_REASONING` | `off` | Disables Gemma 4 reasoning mode so responses go to `message.content` instead of spending the token budget in `reasoning_content`. |
+| `LLAMA_CPP_REASONING` | `on` | Enables Gemma 4 reasoning mode. Watch JSON validity, latency, and generated-token budget. |
+| `LLAMA_CPP_REASONING_BUDGET` | `7168` | Max reasoning tokens before final answer. With `LABEL_MAX_TOKENS=8192`, this reserves roughly 1024 tokens for final JSON. |
 
 `MODEL_SERVER_MODEL` must match the model name returned by `{MODEL_SERVER_BASE_URL}/models`.
 
@@ -111,7 +114,7 @@ X-Request-ID: <request_id>
 X-Prompt-Version: label_v1
 ```
 
-The API accepts `image/png`, `image/jpeg`, and `image/webp` data URLs. It decodes the image once to verify it before calling the model server.
+The API accepts `image/png`, `image/jpeg`, and `image/webp` data URLs. It decodes the image once to verify it before calling the model server. Inputs are rejected before model inference if decoded bytes exceed `MAX_DECODED_IMAGE_BYTES` or `width * height` exceeds `MAX_IMAGE_PIXELS`.
 
 `POST /label` is kept as a deprecated compatibility alias during the initial transition.
 
@@ -185,10 +188,16 @@ The script verifies `MODEL_SERVER_MODEL` against `/models`, sends the sample ima
 Optional live integration tests are also available when llama.cpp and the API are already running:
 
 ```bash
-RUN_INTEGRATION=1 API_URL=http://localhost:8080 uv run pytest -m integration
+RUN_INTEGRATION=1 API_URL=http://localhost:8080 uv run pytest tests/integration/test_live_label.py -v
 ```
 
-Normal `uv run pytest` keeps these tests skipped.
+Run the full suite, including live integration tests:
+
+```bash
+RUN_INTEGRATION=1 API_URL=http://localhost:8080 uv run pytest -v
+```
+
+Normal `uv run pytest` keeps live integration tests skipped. The live label test sends a unique `X-Request-ID` per run and asserts the API echoes it back.
 
 ## Load Test
 
@@ -204,13 +213,35 @@ For a slightly heavier local check:
 uv run python tools/load_label.py --api-url http://localhost:8080 --requests 10 --concurrency 4
 ```
 
-The load test exits nonzero if any threshold fails. Defaults are based on the
-initial local baseline:
+The load test exits nonzero if any threshold fails. The default thresholds are
+for the older reasoning-off baseline and may be too strict with `LLAMA_CPP_REASONING=on`:
 
 ```text
 --min-success-rate 1.0
 --max-p50-latency 10
 --max-latency 20
+```
+
+For the current reasoning-enabled config, start with looser thresholds:
+
+```bash
+uv run python tools/load_label.py --api-url http://localhost:8080 --requests 5 --concurrency 1 --max-p50-latency 70 --max-latency 120
+```
+
+Watch token budget behavior in llama.cpp logs:
+
+```bash
+sudo docker logs -f ails_ai_endpoint_platform-llama-cpp-1
+```
+
+Useful lines include:
+
+```text
+reasoning-budget: activated, budget=7168 tokens
+reasoning-budget: deactivated (natural end)
+reasoning-budget: budget exhausted, forcing end sequence
+prompt eval time = ...
+eval time = ...
 ```
 
 Watch llama.cpp memory and GPU usage while this runs:

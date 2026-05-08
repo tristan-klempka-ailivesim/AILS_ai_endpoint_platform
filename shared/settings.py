@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     debug_model_io: bool = False
 
     max_decoded_image_bytes: int = 4_194_304
+    max_image_pixels: int = 1_290_240
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -10,16 +10,16 @@ from services.inference.openai_client import OpenAIModelClient
 from shared.settings import get_settings
 
 
-def png_data_url() -> str:
+def png_data_url(width: int = 1, height: int = 1) -> str:
     buffer = BytesIO()
-    Image.new("RGB", (1, 1), color=(255, 0, 0)).save(buffer, format="PNG")
+    Image.new("RGB", (width, height), color=(255, 0, 0)).save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
 
 
-def label_payload() -> dict:
+def label_payload(image: str | None = None) -> dict:
     return {
-        "image": png_data_url(),
+        "image": image or png_data_url(),
         "segments": [{"id": 0, "color_name": "red", "rgb": [216, 38, 38]}],
     }
 
@@ -64,6 +64,35 @@ def test_label_returns_array_and_headers(monkeypatch: pytest.MonkeyPatch) -> Non
     ]
 
 
+@pytest.mark.parametrize(
+    ("label", "width", "height"),
+    [
+        ("small", 64, 64),
+        ("medium", 512, 512),
+        ("large", 1136, 1135),
+    ],
+)
+def test_label_accepts_valid_image_sizes(
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    width: int,
+    height: int,
+) -> None:
+    async def chat_completion(self: OpenAIModelClient, **kwargs) -> str:
+        return '[{"id":0,"name":"hull","material":"painted fiberglass"}]'
+
+    monkeypatch.setattr(OpenAIModelClient, "chat_completion", chat_completion)
+    client = TestClient(create_app())
+    response = client.post(
+        "/asset-parts/label",
+        json=label_payload(image=png_data_url(width, height)),
+        headers={"X-Request-ID": f"test-{label}-image"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == f"test-{label}-image"
+
+
 def test_label_malformed_model_output_returns_502(monkeypatch: pytest.MonkeyPatch) -> None:
     async def chat_completion(self: OpenAIModelClient, **kwargs) -> str:
         return "not json"
@@ -77,3 +106,37 @@ def test_label_malformed_model_output_returns_502(monkeypatch: pytest.MonkeyPatc
     )
     assert response.status_code == 502
     assert response.json()["detail"] == "model output was not valid JSON"
+
+
+def test_label_oversized_image_dimensions_return_413(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAX_IMAGE_PIXELS", "0")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/asset-parts/label",
+        json=label_payload(),
+        headers={"X-Request-ID": "test-rid"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "image dimensions too large"
+
+
+def test_label_rejects_image_above_pixel_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAX_IMAGE_PIXELS", "1290240")
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/asset-parts/label",
+        json=label_payload(image=png_data_url(1137, 1135)),
+        headers={"X-Request-ID": "test-over-limit-image"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "image dimensions too large"

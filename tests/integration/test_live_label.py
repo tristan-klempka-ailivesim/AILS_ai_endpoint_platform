@@ -1,5 +1,6 @@
 import base64
 import os
+import uuid
 from pathlib import Path
 
 import httpx
@@ -43,17 +44,18 @@ def test_live_health() -> None:
 def test_live_asset_parts_label() -> None:
     api_url = os.getenv("API_URL", "http://localhost:8080").rstrip("/")
     image_path = Path(os.getenv("INTEGRATION_IMAGE", "tmp/combined_prompt.png"))
+    request_id = f"pytest-integration-label-{uuid.uuid4()}"
     payload = {"image": image_to_data_url(image_path), "segments": SEGMENTS}
 
     response = httpx.post(
         f"{api_url}/asset-parts/label",
         json=payload,
-        headers={"X-Request-ID": "pytest-integration-label"},
+        headers={"X-Request-ID": request_id},
         timeout=180,
     )
 
     assert response.status_code == 200
-    assert response.headers["X-Request-ID"] == "pytest-integration-label"
+    assert response.headers["X-Request-ID"] == request_id
     assert response.headers["X-Prompt-Version"] == "label_v1"
     body = response.json()
     assert isinstance(body, list)

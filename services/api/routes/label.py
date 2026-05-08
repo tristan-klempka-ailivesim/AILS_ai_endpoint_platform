@@ -30,7 +30,7 @@ def build_label_prompt(label_request: LabelRequest, prompt_template: str) -> str
     )
 
 
-def extract_json_array(raw_content: str) -> object:
+def extract_json_array(raw_content: str, request_id: str | None = None) -> object:
     decoder = json.JSONDecoder()
     stripped = raw_content.strip()
 
@@ -57,12 +57,20 @@ def extract_json_array(raw_content: str) -> object:
             return parsed
 
     preview = raw_content[:500].replace("\n", "\\n")
-    logger.warning("model output was not valid JSON array: %s", preview)
+    logger.warning(
+        "model output was not valid JSON array request_id=%s preview=%s",
+        request_id,
+        preview,
+    )
     raise HTTPException(status_code=502, detail="model output was not valid JSON")
 
 
-def parse_label_output(raw_content: str, requested_ids: list[int]) -> list[LabelOutput]:
-    parsed = extract_json_array(raw_content)
+def parse_label_output(
+    raw_content: str,
+    requested_ids: list[int],
+    request_id: str | None = None,
+) -> list[LabelOutput]:
+    parsed = extract_json_array(raw_content, request_id=request_id)
 
     if not isinstance(parsed, list):
         raise HTTPException(status_code=502, detail="model output must be a JSON array")
@@ -111,6 +119,7 @@ async def label_asset_parts(
     validate_image_data_url(
         label_request.image,
         max_decoded_bytes=settings.max_decoded_image_bytes,
+        max_pixels=settings.max_image_pixels,
     )
 
     client = OpenAIModelClient(settings)
@@ -122,7 +131,7 @@ async def label_asset_parts(
         request_id=request_id,
     )
     requested_ids = [segment.id for segment in label_request.segments]
-    return parse_label_output(raw_content, requested_ids)
+    return parse_label_output(raw_content, requested_ids, request_id=request_id)
 
 
 router.add_api_route(

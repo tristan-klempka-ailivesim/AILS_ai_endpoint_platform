@@ -9,9 +9,9 @@ from pydantic import ValidationError
 from shared.schemas import LabelOutput, LabelRequest, validate_image_data_url
 
 
-def png_data_url() -> str:
+def png_data_url(width: int = 1, height: int = 1) -> str:
     buffer = BytesIO()
-    Image.new("RGB", (1, 1), color=(255, 0, 0)).save(buffer, format="PNG")
+    Image.new("RGB", (width, height), color=(255, 0, 0)).save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
 
@@ -62,10 +62,55 @@ def test_validate_image_data_url_returns_metadata() -> None:
     assert metadata.height == 1
 
 
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [
+        (64, 64),
+        (512, 512),
+        (1136, 1135),
+    ],
+)
+def test_validate_image_data_url_accepts_valid_image_sizes(
+    width: int,
+    height: int,
+) -> None:
+    metadata = validate_image_data_url(
+        png_data_url(width, height),
+        max_decoded_bytes=10_000_000,
+        max_pixels=1_290_240,
+    )
+
+    assert metadata.width == width
+    assert metadata.height == height
+
+
 def test_oversized_decoded_image_fails() -> None:
     with pytest.raises(HTTPException) as exc:
         validate_image_data_url(png_data_url(), max_decoded_bytes=1)
     assert exc.value.status_code == 413
+
+
+def test_oversized_image_dimensions_fail() -> None:
+    with pytest.raises(HTTPException) as exc:
+        validate_image_data_url(
+            png_data_url(),
+            max_decoded_bytes=10_000,
+            max_pixels=0,
+        )
+    assert exc.value.status_code == 413
+    assert exc.value.detail == "image dimensions too large"
+
+
+def test_image_above_pixel_limit_fails() -> None:
+    with pytest.raises(HTTPException) as exc:
+        validate_image_data_url(
+            png_data_url(1137, 1135),
+            max_decoded_bytes=10_000_000,
+            max_pixels=1_290_240,
+        )
+
+    assert exc.value.status_code == 413
+    assert exc.value.detail == "image dimensions too large"
 
 
 def test_invalid_media_type_fails() -> None:
