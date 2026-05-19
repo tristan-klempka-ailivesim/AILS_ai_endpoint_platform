@@ -47,7 +47,9 @@ def test_parse_label_output_accepts_embedded_json_array() -> None:
     assert labels[0].material == "fiberglass"
 
 
-def test_parse_label_output_logs_request_id_on_invalid_json(caplog: pytest.LogCaptureFixture) -> None:
+def test_parse_label_output_logs_request_id_on_invalid_json(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     with pytest.raises(HTTPException):
         parse_label_output("not json", [0], request_id="rid-123")
 

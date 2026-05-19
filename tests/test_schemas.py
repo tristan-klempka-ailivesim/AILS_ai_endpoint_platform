@@ -87,7 +87,7 @@ def test_validate_image_data_url_accepts_valid_image_sizes(
 def test_oversized_decoded_image_fails() -> None:
     with pytest.raises(HTTPException) as exc:
         validate_image_data_url(png_data_url(), max_decoded_bytes=1)
-    assert exc.value.status_code == 413
+    assert exc.value.status_code == 400
 
 
 def test_oversized_image_dimensions_fail() -> None:
@@ -97,7 +97,7 @@ def test_oversized_image_dimensions_fail() -> None:
             max_decoded_bytes=10_000,
             max_pixels=0,
         )
-    assert exc.value.status_code == 413
+    assert exc.value.status_code == 400
     assert exc.value.detail == "image dimensions too large"
 
 
@@ -109,7 +109,7 @@ def test_image_above_pixel_limit_fails() -> None:
             max_pixels=1_290_240,
         )
 
-    assert exc.value.status_code == 413
+    assert exc.value.status_code == 400
     assert exc.value.detail == "image dimensions too large"
 
 
@@ -117,4 +117,4 @@ def test_invalid_media_type_fails() -> None:
     bad = png_data_url().replace("data:image/png", "data:text/plain")
     with pytest.raises(HTTPException) as exc:
         validate_image_data_url(bad, max_decoded_bytes=10_000)
-    assert exc.value.status_code == 422
+    assert exc.value.status_code == 400

@@ -31,45 +31,70 @@ async def run_one(
     payload: dict,
     index: int,
     semaphore: asyncio.Semaphore,
+    completed: set[int],
 ) -> dict:
     request_id = f"load-test-{index:04d}"
     start = time.perf_counter()
-    async with semaphore:
-        try:
-            response = await client.post(
-                f"{api_url.rstrip('/')}/asset-parts/label",
-                json=payload,
-                headers={"X-Request-ID": request_id},
-            )
-            latency = time.perf_counter() - start
-            body = response.json()
-            ok = response.status_code == 200 and isinstance(body, list)
-            return {
-                "index": index,
-                "ok": ok,
-                "status": response.status_code,
-                "latency": latency,
-                "request_id": response.headers.get("X-Request-ID"),
-                "prompt_version": response.headers.get("X-Prompt-Version"),
-                "body": body,
-            }
-        except Exception as exc:
-            latency = time.perf_counter() - start
-            return {
-                "index": index,
-                "ok": False,
-                "status": None,
-                "latency": latency,
-                "request_id": request_id,
-                "prompt_version": None,
-                "body": {"error": str(exc)},
-            }
+    try:
+        async with semaphore:
+            try:
+                response = await client.post(
+                    f"{api_url.rstrip('/')}/asset-parts/label",
+                    json=payload,
+                    headers={"X-Request-ID": request_id},
+                )
+                latency = time.perf_counter() - start
+                body = response.json()
+                ok = response.status_code == 200 and isinstance(body, list)
+                return {
+                    "index": index,
+                    "ok": ok,
+                    "status": response.status_code,
+                    "latency": latency,
+                    "request_id": response.headers.get("X-Request-ID"),
+                    "prompt_version": response.headers.get("X-Prompt-Version"),
+                    "body": body,
+                }
+            except Exception as exc:
+                latency = time.perf_counter() - start
+                return {
+                    "index": index,
+                    "ok": False,
+                    "status": None,
+                    "latency": latency,
+                    "request_id": request_id,
+                    "prompt_version": None,
+                    "body": {"error": str(exc)},
+                }
+    finally:
+        completed.add(index)
+
+
+async def report_progress(
+    *,
+    started: float,
+    total: int,
+    concurrency: int,
+    completed: set[int],
+    interval: float,
+) -> None:
+    while len(completed) < total:
+        await asyncio.sleep(interval)
+        elapsed = time.perf_counter() - started
+        done = len(completed)
+        active = min(concurrency, total - done)
+        print(
+            f"progress elapsed={elapsed:.1f}s completed={done}/{total} "
+            f"active_or_queued={active}",
+            flush=True,
+        )
 
 
 async def run_load(args: argparse.Namespace) -> int:
     payload = {"image": image_to_data_url(Path(args.image)), "segments": SEGMENTS}
     semaphore = asyncio.Semaphore(args.concurrency)
-    timeout = httpx.Timeout(args.timeout)
+    timeout = None if args.timeout == 0 else httpx.Timeout(args.timeout)
+    completed: set[int] = set()
 
     started = time.perf_counter()
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -80,10 +105,24 @@ async def run_load(args: argparse.Namespace) -> int:
                 payload=payload,
                 index=index,
                 semaphore=semaphore,
+                completed=completed,
             )
             for index in range(args.requests)
         ]
-        results = await asyncio.gather(*tasks)
+        progress_task = asyncio.create_task(
+            report_progress(
+                started=started,
+                total=args.requests,
+                concurrency=args.concurrency,
+                completed=completed,
+                interval=args.progress_interval,
+            )
+        )
+        try:
+            results = await asyncio.gather(*tasks)
+        finally:
+            progress_task.cancel()
+            await asyncio.gather(progress_task, return_exceptions=True)
     elapsed = time.perf_counter() - started
 
     for result in results:
@@ -140,7 +179,13 @@ def main() -> int:
     parser.add_argument("--image", default="tmp/combined_prompt.png")
     parser.add_argument("--requests", type=int, default=5)
     parser.add_argument("--concurrency", type=int, default=2)
-    parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=180,
+        help="Per-request HTTP timeout in seconds. Use 0 to disable the client timeout.",
+    )
+    parser.add_argument("--progress-interval", type=float, default=5)
     parser.add_argument("--min-success-rate", type=float, default=1.0)
     parser.add_argument("--max-p50-latency", type=float, default=10.0)
     parser.add_argument("--max-latency", type=float, default=20.0)
@@ -156,6 +201,10 @@ def main() -> int:
         parser.error("--max-p50-latency must be greater than 0")
     if args.max_latency <= 0:
         parser.error("--max-latency must be greater than 0")
+    if args.timeout < 0:
+        parser.error("--timeout must be 0 or greater")
+    if args.progress_interval <= 0:
+        parser.error("--progress-interval must be greater than 0")
 
     return asyncio.run(run_load(args))
 

@@ -3,6 +3,7 @@ import logging
 from io import BytesIO
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -42,7 +43,45 @@ def test_health_reports_model_match(monkeypatch: pytest.MonkeyPatch) -> None:
     client = TestClient(create_app())
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["model_server_model_match"] is True
+    assert response.json() == {
+        "status": "ok",
+        "model_ready": True,
+        "metadata_ready": False,
+        "label_ready": True,
+    }
+
+
+def test_health_reports_not_ready_when_model_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def list_models(self: OpenAIModelClient) -> list[str]:
+        raise HTTPException(status_code=503, detail="model server connection failure")
+
+    monkeypatch.setattr(OpenAIModelClient, "list_models", list_models)
+    client = TestClient(create_app())
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "model_ready": False,
+        "metadata_ready": False,
+        "label_ready": False,
+    }
+
+
+def test_health_reports_not_ready_when_model_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def list_models(self: OpenAIModelClient) -> list[str]:
+        return ["other-model"]
+
+    monkeypatch.setattr(OpenAIModelClient, "list_models", list_models)
+    client = TestClient(create_app())
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["model_ready"] is False
+    assert response.json()["label_ready"] is False
+    assert response.json()["metadata_ready"] is False
 
 
 def test_label_returns_array_and_headers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -200,7 +239,7 @@ def test_label_returns_502_after_retry_exhaustion(
     assert response.json()["detail"] == "model output was not valid JSON"
 
 
-def test_label_oversized_image_dimensions_return_413(
+def test_label_oversized_image_dimensions_return_400(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0
@@ -221,7 +260,7 @@ def test_label_oversized_image_dimensions_return_413(
         headers={"X-Request-ID": "test-rid"},
     )
 
-    assert response.status_code == 413
+    assert response.status_code == 400
     assert calls == 0
     assert response.json()["detail"] == "image dimensions too large"
 
@@ -241,9 +280,9 @@ def test_request_log_includes_failure_reason_for_http_error(
         headers={"X-Request-ID": "test-failure-log-rid"},
     )
 
-    assert response.status_code == 413
+    assert response.status_code == 400
     assert "api request completed request_id=test-failure-log-rid" in caplog.text
-    assert "status=413" in caplog.text
+    assert "status=400" in caplog.text
     assert "failure_reason=image dimensions too large" in caplog.text
 
 
@@ -260,5 +299,76 @@ def test_label_rejects_image_above_pixel_limit(
         headers={"X-Request-ID": "test-over-limit-image"},
     )
 
-    assert response.status_code == 413
+    assert response.status_code == 400
     assert response.json()["detail"] == "image dimensions too large"
+
+
+@pytest.mark.parametrize(
+    ("image", "detail"),
+    [
+        ("not-a-data-url", "image must be a valid data URL"),
+        ("data:text/plain;base64,AAAA", "unsupported image media type"),
+        ("data:image/png;base64,not-valid-base64", "image base64 data was invalid"),
+        ("data:image/png;base64,AAAA", "image data was not a valid image"),
+    ],
+)
+def test_label_invalid_image_data_returns_400(
+    monkeypatch: pytest.MonkeyPatch,
+    image: str,
+    detail: str,
+) -> None:
+    calls = 0
+
+    async def chat_completion(self: OpenAIModelClient, **kwargs) -> str:
+        nonlocal calls
+        calls += 1
+        return '[{"id":0,"name":"hull","material":"painted fiberglass"}]'
+
+    monkeypatch.setattr(OpenAIModelClient, "chat_completion", chat_completion)
+    client = TestClient(create_app())
+    response = client.post(
+        "/asset-parts/label",
+        json=label_payload(image=image),
+        headers={"X-Request-ID": "test-invalid-image"},
+    )
+
+    assert response.status_code == 400
+    assert calls == 0
+    assert response.json()["detail"] == detail
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"image": png_data_url(), "segments": []},
+        {"image": png_data_url(), "segments": [{"id": 0, "color_name": "red", "rgb": [999, 0, 0]}]},
+        {
+            "image": png_data_url(),
+            "segments": [
+                {"id": 0, "color_name": "red", "rgb": [216, 38, 38]},
+                {"id": 0, "color_name": "green", "rgb": [48, 232, 101]},
+            ],
+        },
+    ],
+)
+def test_label_schema_errors_remain_422(payload: dict) -> None:
+    client = TestClient(create_app())
+    response = client.post("/asset-parts/label", json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("status_code", [503, 504])
+def test_label_preserves_model_availability_status_codes(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+) -> None:
+    async def chat_completion(self: OpenAIModelClient, **kwargs) -> str:
+        raise HTTPException(status_code=status_code, detail="model unavailable")
+
+    monkeypatch.setattr(OpenAIModelClient, "chat_completion", chat_completion)
+    client = TestClient(create_app())
+    response = client.post("/asset-parts/label", json=label_payload())
+
+    assert response.status_code == status_code

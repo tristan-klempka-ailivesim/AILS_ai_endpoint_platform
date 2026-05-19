@@ -52,7 +52,7 @@ The repo includes a default `.env` for the current deployment machine. Keep
 | `API_PORT` | `8080` | Host port for the API container. |
 | `MODEL_SERVER_BASE_URL` | `http://llama-cpp:8000/v1` | OpenAI-compatible model API base URL. Use `http://localhost:8000/v1` when running the API directly on the host. |
 | `MODEL_SERVER_MODEL` | `gemma-4-26b-a4b-it-gguf` | Model name sent in chat completion requests. Must match `/models`. |
-| `MODEL_SERVER_TIMEOUT_SECONDS` | `120` | HTTP timeout for model calls. Reasoning-enabled requests can take 30-60 seconds on the current GPU. |
+| `MODEL_SERVER_TIMEOUT_SECONDS` | `300` | Per-request HTTP timeout for model calls. Reasoning-enabled concurrent requests can take several minutes on the current GPU. |
 | `LABEL_TEMPERATURE` | `0.1` | Generation temperature. |
 | `LABEL_MAX_TOKENS` | `8192` | Max generated tokens. Gemma 4 reasoning may spend significant budget before final content. |
 | `LABEL_MODEL_MAX_RETRIES` | `1` | Number of same-prompt retries for model-output `502` failures before returning an error. |
@@ -79,7 +79,18 @@ The repo includes a default `.env` for the current deployment machine. Keep
 
 ### `GET /health`
 
-Returns API status, prompt version, model-server reachability, and whether `MODEL_SERVER_MODEL` appears in `/models`.
+Returns API process status and feature readiness:
+
+```json
+{
+  "status": "ok",
+  "model_ready": true,
+  "metadata_ready": false,
+  "label_ready": true
+}
+```
+
+`metadata_ready` is `false` until `POST /asset/metadata` is implemented.
 
 ### `POST /asset-parts/label`
 
@@ -126,10 +137,18 @@ api request completed request_id=<id> method=POST path=/asset-parts/label status
 For validation or model-output failures, `failure_reason` contains the HTTP error detail, for example:
 
 ```text
-api request completed request_id=<id> method=POST path=/asset-parts/label status=413 latency_ms=5.00 failure_reason=image dimensions too large
+api request completed request_id=<id> method=POST path=/asset-parts/label status=400 latency_ms=5.00 failure_reason=image dimensions too large
 ```
 
 The API accepts `image/png`, `image/jpeg`, and `image/webp` data URLs. It decodes the image once to verify it before calling the model server. Inputs are rejected before model inference if decoded bytes exceed `MAX_DECODED_IMAGE_BYTES` or `width * height` exceeds `MAX_IMAGE_PIXELS`.
+
+Status-code mapping:
+
+- `400`: invalid image data or image size limits.
+- `422`: request schema validation failed.
+- `502`: model returned invalid output or non-2xx response.
+- `503`: model server unavailable.
+- `504`: model request timed out.
 
 `POST /label` is kept as a deprecated compatibility alias during the initial transition.
 

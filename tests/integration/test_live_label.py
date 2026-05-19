@@ -36,8 +36,9 @@ def test_live_health() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["model_server_reachable"] is True
-    assert body["model_server_model_match"] is True
+    assert body["model_ready"] is True
+    assert body["metadata_ready"] is False
+    assert body["label_ready"] is True
 
 
 @pytest.mark.skipif(not integration_enabled(), reason="set RUN_INTEGRATION=1 to run")

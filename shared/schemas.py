@@ -28,13 +28,6 @@ class LabelRequest(BaseModel):
     image: str
     segments: Annotated[list[Segment], Field(min_length=1)]
 
-    @field_validator("image")
-    @classmethod
-    def validate_image_prefix(cls, image: str) -> str:
-        if not image.startswith("data:image/"):
-            raise ValueError("image must be a data URL")
-        return image
-
     @model_validator(mode="after")
     def validate_unique_segment_ids(self) -> "LabelRequest":
         ids = [segment.id for segment in self.segments]
@@ -61,14 +54,14 @@ class ImageMetadata:
 def _split_data_url(data_url: str) -> tuple[str, str]:
     header, separator, encoded = data_url.partition(",")
     if separator != "," or not encoded:
-        raise HTTPException(status_code=422, detail="image must be a valid data URL")
+        raise HTTPException(status_code=400, detail="image must be a valid data URL")
 
     if not header.endswith(";base64"):
-        raise HTTPException(status_code=422, detail="image data URL must be base64 encoded")
+        raise HTTPException(status_code=400, detail="image data URL must be base64 encoded")
 
     media_type = header.removeprefix("data:").removesuffix(";base64")
     if media_type not in ALLOWED_IMAGE_MEDIA_TYPES:
-        raise HTTPException(status_code=422, detail="unsupported image media type")
+        raise HTTPException(status_code=400, detail="unsupported image media type")
 
     return media_type, encoded
 
@@ -83,10 +76,10 @@ def validate_image_data_url(
     try:
         decoded = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="image base64 data was invalid") from exc
+        raise HTTPException(status_code=400, detail="image base64 data was invalid") from exc
 
     if len(decoded) > max_decoded_bytes:
-        raise HTTPException(status_code=413, detail="decoded image too large")
+        raise HTTPException(status_code=400, detail="decoded image too large")
 
     try:
         with Image.open(BytesIO(decoded)) as image:
@@ -94,10 +87,10 @@ def validate_image_data_url(
         with Image.open(BytesIO(decoded)) as image:
             width, height = image.size
     except (UnidentifiedImageError, OSError) as exc:
-        raise HTTPException(status_code=422, detail="image data was not a valid image") from exc
+        raise HTTPException(status_code=400, detail="image data was not a valid image") from exc
 
     if max_pixels is not None and width * height > max_pixels:
-        raise HTTPException(status_code=413, detail="image dimensions too large")
+        raise HTTPException(status_code=400, detail="image dimensions too large")
 
     return ImageMetadata(
         media_type=media_type,

@@ -76,3 +76,24 @@ Error response:
   "detail": "error message"
 }
 ```
+
+Status codes:
+
+- `400`: invalid image data or image size limits.
+- `422`: request schema validation failed.
+- `502`: model returned invalid output or non-2xx response.
+- `503`: model server unavailable.
+- `504`: model request timed out.
+
+Health response:
+
+```json
+{
+  "status": "ok",
+  "model_ready": true,
+  "metadata_ready": false,
+  "label_ready": true
+}
+```
+
+`metadata_ready` is currently `false`; metadata generation is planned for `POST /asset/metadata`.
